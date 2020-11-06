@@ -1,2 +1,3 @@
 # GNN
-GNN code
+GNN code for training.
+
