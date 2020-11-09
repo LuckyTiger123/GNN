@@ -68,7 +68,7 @@ with torch.no_grad():
 # **************
 
 # **************
-# chebynet
+# Chebynet
 # the number of parameters of core K normally is far less than N , so we select 3
 initCore2 = torch.rand(3)
 initCore2.requires_grad_()
