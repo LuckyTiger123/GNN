@@ -1,7 +1,11 @@
 import torch
 import torch.nn.functional as F
 
+# device
+device = torch.device('cuda:6' if torch.cuda.is_available() else 'cpu')
 
+
+# model define
 class Model(torch.nn.Module):
     def __init__(self, feature_num, output_num):
         super(Model, self).__init__()
@@ -17,16 +21,15 @@ class Model(torch.nn.Module):
 
     def forward(self, node_adjacency, feature_map, fe_mask_rate):
         fsw = torch.mm(self.A, node_adjacency)
-        fsw = F.dropout(fsw, p=fe_mask_rate, training=True)  # TODO
-        agg_feature = torch.zeros(1, fsw.shape[0], requires_grad=True)
+        fsw = F.dropout(fsw, p=fe_mask_rate, training=self.training)  # TODO
+        agg_feature = torch.zeros(1, fsw.shape[0], device=device)
         for i in range(fsw.shape[0]):
             item1 = torch.unsqueeze(fsw[i], 0)
             item2 = torch.unsqueeze(feature_map.T[i], 0)
-            sum = torch.squeeze(torch.mm(item1, item2.T), 0)
-            agg_feature[0][i] = sum
+            feature_sum = torch.squeeze(torch.mm(item1, item2.T), 0)
+            agg_feature[0][i] = feature_sum
         result = torch.mm(agg_feature, self.B)
-        return result
-
+        return F.log_softmax(result, dim=1)
 
 # test model
 # model = Model(3, 4)
