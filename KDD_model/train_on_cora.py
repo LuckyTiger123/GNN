@@ -15,6 +15,7 @@ data = dataset[0].to(device=device)
 # transform to adj matrix
 adj_matrix = SparseTensor.from_edge_index(data.edge_index).to_dense().to(device=device)
 
+
 # model
 class Model(torch.nn.Module):
     def __init__(self, feature_num, output_num):
