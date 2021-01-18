@@ -113,3 +113,14 @@ def add_edge(edge_index: Adj, add_rate: float = 0.1) -> Tensor:
     dense_matrix = dense_matrix * (1 - add_rate) + add_rate
     edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(torch.bernoulli(dense_matrix).long(), dim=0))[0]
     return edge_final
+
+
+# add noisy edge change_type {1,2,3} means operation {add edge/remove edge/add and remove edge}
+def add_noise_edge(edge_index: Adj, add_rate: float = 0.00005, remove_rate: float = 0.1) -> Tensor:
+    dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
+    dense_matrix = dense_matrix * (1 - remove_rate)
+    dense_matrix = torch.bernoulli(dense_matrix).long()
+    dense_matrix = dense_matrix * (1 - add_rate) + add_rate
+    dense_matrix = torch.bernoulli(dense_matrix).long()
+    edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))[0]
+    return edge_final
