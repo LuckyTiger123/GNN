@@ -1,5 +1,6 @@
 import math
 import torch
+import random
 import torch_geometric
 from torch import Tensor
 from torch_geometric.nn.conv import MessagePassing
@@ -108,10 +109,26 @@ def add_and_remove_featureEdge(edge_index: Adj, feature_num: int, add_rate: floa
     return sparse_A, edge_activate.long()
 
 
+# add edge with parameter of global rate
 def add_edge(edge_index: Adj, add_rate: float = 0.1) -> Tensor:
     dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
     dense_matrix = dense_matrix * (1 - add_rate) + add_rate
     edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(torch.bernoulli(dense_matrix).long(), dim=0))[0]
+    return edge_final
+
+
+# add edge with parameter relates to existing side
+def add_related_edge(edge_index: Adj, add_rate: float = 0.1, random_seed: int = 0) -> Tensor:
+    edge_num = int(edge_index.size(1))
+    add_num = int(edge_num * add_rate)
+    dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
+    edge_num = dense_matrix.size(0)
+    random.seed(random_seed)
+    for i in range(add_num):
+        source_node = random.randint(0, edge_num - 1)
+        des_node = random.randint(0, edge_num - 1)
+        dense_matrix[source_node][des_node] = 1
+    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
 
 
@@ -124,3 +141,23 @@ def add_noise_edge(edge_index: Adj, add_rate: float = 0.00005, remove_rate: floa
     dense_matrix = torch.bernoulli(dense_matrix).long()
     edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))[0]
     return edge_final
+
+
+# gumbel softmax for matrix
+def gumbel_softmax_for_matrix(logits: Tensor, tau: float = 1) -> Tensor:
+    # Gumbel(0,1)
+    gumbels_1 = -torch.empty_like(logits, memory_format=torch.legacy_contiguous_format).exponential_().log().to(
+        logits.device)
+    gumbels_2 = -torch.empty_like(logits, memory_format=torch.legacy_contiguous_format).exponential_().log().to(
+        logits.device)
+
+    edge_e = torch.unsqueeze((gumbels_1 + logits) / tau, 0)
+    edge_d = torch.unsqueeze((gumbels_2 + 1 - logits) / tau, 0)
+
+    # concat the edge_e and edge_d
+    edge_p = torch.cat((edge_d, edge_e), 0)
+
+    # softmax
+    edge = edge_p.softmax(dim=0)
+
+    return Tensor(edge[0]).to(device=logits.device)
