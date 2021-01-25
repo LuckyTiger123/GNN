@@ -65,6 +65,7 @@ class SampleModel(torch.nn.Module):
 
         feature_result = torch.tensor([]).to(device=x.device)
 
+        # add_rate = list(torch.tensor([]).to(device=device) for i in range(x.size(0)))
         # node-wise operation
         for i in range(x.size(0)):
             self_feature = torch.zeros(x.size(1)).to(device=x.device)
@@ -111,24 +112,26 @@ class SampleModel(torch.nn.Module):
                 del dropout_matrix
 
                 add_rate = torch.mm(feature_mix, self.probablity_coefficient)
+                # add_rate = add_rate.softmax(dim=0).view(1, -1)
                 # add_rate = F.softmax(add_rate, dim=0).view(1, -1)
 
                 # gumbel softmax
                 add_rate = F.gumbel_softmax(add_rate, tau=0.1, hard=False, dim=0).view(1, -1)
 
+                nor_add = add_rate.clone()
                 for l in range(self.sample_num):
-                    add_rate[0][l] /= (
+                    nor_add[0][l] /= (
                             pow(len(self.adj_list[i]), 0.5) * (
                         pow(len(self.adj_list[candidate_set[l]]), 0.5) if candidate_set[l] != -1 else 1))
 
-                add_feature = torch.mm(add_rate, candidate_feature)
+                add_feature = torch.mm(nor_add, candidate_feature)
                 self_feature += add_feature
 
             feature_result = torch.cat([feature_result, self_feature], 0)
 
             # call gc
             gc.collect()
-            print('{} node has caled.'.format(i))
+            # print('{} node has caled.'.format(i))
 
         # transform feature dimension
         out = torch.matmul(feature_result, self.weight)
@@ -162,7 +165,8 @@ class SampleModel(torch.nn.Module):
             return random.sample(result, self.sample_num)
             # return result
 
-# device = torch.device('cuda:1' if torch.cuda.is_available() else 'cpu')
+
+# device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
 #
 # node_A = torch.LongTensor(
 #     [[0, 1, 0, 0, 1, 0, 0, 0], [1, 0, 1, 0, 0, 0, 1, 0], [0, 1, 0, 0, 1, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1, 0],
@@ -173,4 +177,22 @@ class SampleModel(torch.nn.Module):
 # model = SampleModel(3, 2)
 # model.train()
 # out = model(feature_M, edge_indexk)
-# print(out)
+# # out = F.softmax(out, dim=1)
+# loss = F.cross_entropy(out, torch.tensor([1, 1, 1, 1, 1, 1, 1, 1]))
+#
+# print(model.conv1.weight.grad)
+# print(model.conv2.weight.grad)
+#
+# print(model.weight.grad)
+# print(model.bias.grad)
+#
+# print(model.probablity_coefficient.grad)
+#
+# torch.autograd.set_detect_anomaly(True)
+# loss.backward()
+#
+# print(model.conv1.weight.grad)
+# print(model.conv2.weight.grad)
+# print(model.weight.grad)
+# print(model.bias.grad)
+# print(model.probablity_coefficient.grad)
