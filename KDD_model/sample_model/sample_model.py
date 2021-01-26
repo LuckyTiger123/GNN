@@ -3,6 +3,7 @@ import torch
 import math
 import random
 import torch_geometric
+import time
 import torch.nn.functional as F
 from torch import Tensor
 from torch_geometric.typing import Adj, OptTensor
@@ -68,9 +69,11 @@ class SampleModel(torch.nn.Module):
         # add_rate = list(torch.tensor([]).to(device=device) for i in range(x.size(0)))
         # node-wise operation
         for i in range(x.size(0)):
+            whole_start = time.time()
             self_feature = torch.zeros(x.size(1)).to(device=x.device)
             feature_agg = torch.tensor([]).to(device=x.device)
-            # print(feature_agg)
+
+            time_start = time.time()
             for j in self.adj_list[i]:
                 feature_agg = torch.cat([feature_agg, torch.unsqueeze(x[j], dim=0)], 0)
 
@@ -86,10 +89,16 @@ class SampleModel(torch.nn.Module):
                         pow(len(self.adj_list[i]), 0.5) * pow(len(self.adj_list[self.adj_list[i][j]]), 0.5))
             del feature_agg
             self_feature = torch.unsqueeze(self_feature, 0)
+            print('self agg use time {} s'.format(time.time() - time_start))
 
             # candidate set
             if self.training:
-                candidate_set = self.generate_candidate_set(i)
+                # candidate_set = self.generate_candidate_set(i)
+                time_start = time.time()
+
+                candidate_set = self.roughly_generate_candidate_set(i)
+
+                print('generate the candidate set use {} s'.format(time.time() - time_start))
 
                 # add -1 to make the candidate set have sample_num elements.
                 if len(candidate_set) < self.sample_num:
@@ -98,6 +107,8 @@ class SampleModel(torch.nn.Module):
 
                 feature_mix = torch.tensor([]).to(device=x.device)
                 candidate_feature = torch.tensor([]).to(device=x.device)
+
+                time_start = time.time()
                 # generate candidate feature mix
                 for k in candidate_set:
                     item = torch.cat(
@@ -110,15 +121,23 @@ class SampleModel(torch.nn.Module):
                 dropout_matrix = torch.ones_like(candidate_feature, device=x.device) - drop_rate
                 candidate_feature = candidate_feature.mul(torch.bernoulli(dropout_matrix).long())
                 del dropout_matrix
+                print('candidate feature mix and drop use {} s'.format(time.time() - time_start))
 
-                add_rate = torch.mm(feature_mix, self.probablity_coefficient)
+                time_start = time.time()
+                add_rate = torch.mm(feature_mix, self.probablity_coefficient).view(1, -1)
                 # add_rate = add_rate.softmax(dim=0).view(1, -1)
                 # add_rate = F.softmax(add_rate, dim=0).view(1, -1)
+                add_rate = torch.cat([add_rate, torch.zeros_like(add_rate)], 0)
 
                 # gumbel softmax
-                add_rate = F.gumbel_softmax(add_rate, tau=0.1, hard=False, dim=0).view(1, -1)
+                add_rate = F.gumbel_softmax(add_rate, tau=0.1, hard=False, dim=0)
+                add_rate = torch.unsqueeze(add_rate[0], 0)
+                print('cal add rate and gumbel softmax use {} s'.format(time.time() - time_start))
+                # print(add_rate)
+                # a = input()
 
                 nor_add = add_rate.clone()
+                time_start = time.time()
                 for l in range(self.sample_num):
                     nor_add[0][l] /= (
                             pow(len(self.adj_list[i]), 0.5) * (
@@ -126,12 +145,14 @@ class SampleModel(torch.nn.Module):
 
                 add_feature = torch.mm(nor_add, candidate_feature)
                 self_feature += add_feature
-
+                print('normalize and add feature use {} s'.format(time.time() - time_start))
             feature_result = torch.cat([feature_result, self_feature], 0)
 
             # call gc
             gc.collect()
-            # print('{} node has caled.'.format(i))
+            print('a node use {} s'.format(time.time() - whole_start))
+            print('{} node has caled.'.format(i))
+            print('--------------------------------------')
 
         # transform feature dimension
         out = torch.matmul(feature_result, self.weight)
@@ -165,6 +186,26 @@ class SampleModel(torch.nn.Module):
             return random.sample(result, self.sample_num)
             # return result
 
+    def roughly_generate_candidate_set(self, node: int, attenuate_rate: float = 0.1) -> list:
+        flag_list = list(0 for i in range(len(self.adj_list)))
+
+        # dyeing the neighbor nodes
+        for item in self.adj_list[node]:
+            flag_list[item] = 1
+
+        result = list()
+        # generate k-hop sample
+        for i in range(self.sample_num):
+            cur_node = node
+            for j in range(self.k_hop):
+                cur_node = random.sample(self.adj_list[cur_node], 1)[0]
+                if random.random() < attenuate_rate:
+                    break
+            if flag_list[cur_node] != 1:
+                result.append(cur_node)
+                flag_list[cur_node] = 1
+
+        return result
 
 # device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
 #
@@ -175,11 +216,12 @@ class SampleModel(torch.nn.Module):
 # feature_M = torch.Tensor(
 #     [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15], [16, 17, 18], [19, 20, 21], [22, 23, 24]])
 # model = SampleModel(3, 2)
+#
 # model.train()
 # out = model(feature_M, edge_indexk)
-# # out = F.softmax(out, dim=1)
+# out = F.softmax(out, dim=1)
 # loss = F.cross_entropy(out, torch.tensor([1, 1, 1, 1, 1, 1, 1, 1]))
-#
+# #
 # print(model.conv1.weight.grad)
 # print(model.conv2.weight.grad)
 #
@@ -187,10 +229,10 @@ class SampleModel(torch.nn.Module):
 # print(model.bias.grad)
 #
 # print(model.probablity_coefficient.grad)
-#
+# #
 # torch.autograd.set_detect_anomaly(True)
 # loss.backward()
-#
+# #
 # print(model.conv1.weight.grad)
 # print(model.conv2.weight.grad)
 # print(model.weight.grad)
