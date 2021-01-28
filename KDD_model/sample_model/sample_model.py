@@ -6,14 +6,15 @@ import torch_geometric
 import time
 import torch.nn.functional as F
 from torch import Tensor
-from torch_geometric.typing import Adj, OptTensor
+from torch_geometric.typing import Adj
+from torch_geometric.nn.conv import MessagePassing
 from torch.nn import Parameter
 
 
-class SampleModel(torch.nn.Module):
+class SampleModel(MessagePassing):
     def __init__(self, in_channels: int, out_channels: int, add_self_loops: bool = True, normalize: bool = True,
                  bias: bool = True, k_hop: int = 3, sample_num: int = 4, **kwargs):
-        super(SampleModel, self).__init__()
+        super(SampleModel, self).__init__(aggr='add', **kwargs)
 
         self.conv1 = torch_geometric.nn.GCNConv(in_channels, 64, add_self_loops=add_self_loops, normalize=normalize,
                                                 bias=bias)
@@ -51,54 +52,48 @@ class SampleModel(torch.nn.Module):
         if tensor is not None:
             tensor.data.fill_(0)
 
-    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.4):
+    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.4, attenuate_rate: float = 0.4,
+                candidate_type: int = 0, mask: Tensor = None):
         # add self loop
         if self.add_self_loops:
             edge_index, _ = torch_geometric.utils.add_self_loops(edge_index, num_nodes=x.size(0))
 
-        # adjacency list
-        self.adj_list = list(list() for i in range(x.size(0)))
-        self.fill_adj_list(edge_index)
+        # normalize
+        row, col = edge_index
+        deg = torch_geometric.utils.degree(col, x.size(0), dtype=x.dtype)
+        deg_inv_sqrt = deg.pow(-0.5)
+        edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
 
-        # generate GCN embedding of node
-        half_embedding = self.conv1(x, edge_index)
-        node_embedding = self.conv2(half_embedding, edge_index)
+        # for eval
+        if not self.training:
+            # message propagate
+            feature_result = self.propagate(edge_index, size=None, x=x, edge_weight=edge_weight)
 
-        feature_result = torch.tensor([]).to(device=x.device)
+        else:
+            # adjacency list
+            self.adj_list = list(list() for i in range(x.size(0)))
+            self.fill_adj_list(edge_index)
 
-        # add_rate = list(torch.tensor([]).to(device=device) for i in range(x.size(0)))
-        # node-wise operation
-        for i in range(x.size(0)):
-            whole_start = time.time()
-            self_feature = torch.zeros(x.size(1)).to(device=x.device)
-            feature_agg = torch.tensor([]).to(device=x.device)
+            # generate GCN embedding of node
+            half_embedding = self.conv1(x, edge_index)
+            node_embedding = self.conv2(half_embedding, edge_index)
 
-            time_start = time.time()
-            for j in self.adj_list[i]:
-                feature_agg = torch.cat([feature_agg, torch.unsqueeze(x[j], dim=0)], 0)
+            # normal propagate
+            feature_result = self.propagate(edge_index, size=None, x=x, edge_weight=edge_weight, drop_rate=drop_rate)
 
-            # random drop
-            if self.training:
-                dropout_matrix = torch.ones_like(feature_agg, device=x.device) - drop_rate
-                feature_agg = feature_agg.mul(torch.bernoulli(dropout_matrix).long())
-                del dropout_matrix
+            # node-wise operation
+            for i in range(x.size(0)):
+                # mask judgment
+                if mask is not None:
+                    if not mask[i]:
+                        continue
 
-            # self agg
-            for j in range(len(self.adj_list[i])):
-                self_feature += feature_agg[j] / (
-                        pow(len(self.adj_list[i]), 0.5) * pow(len(self.adj_list[self.adj_list[i][j]]), 0.5))
-            del feature_agg
-            self_feature = torch.unsqueeze(self_feature, 0)
-            print('self agg use time {} s'.format(time.time() - time_start))
+                self_feature = torch.zeros([1, x.size(1)]).to(device=x.device)
 
-            # candidate set
-            if self.training:
-                # candidate_set = self.generate_candidate_set(i)
-                time_start = time.time()
-
-                candidate_set = self.roughly_generate_candidate_set(i)
-
-                print('generate the candidate set use {} s'.format(time.time() - time_start))
+                if candidate_type == 0:
+                    candidate_set = self.roughly_generate_candidate_set(i, attenuate_rate=attenuate_rate)
+                else:
+                    candidate_set = self.generate_candidate_set(i, attenuate_rate=attenuate_rate)
 
                 # add -1 to make the candidate set have sample_num elements.
                 if len(candidate_set) < self.sample_num:
@@ -108,7 +103,6 @@ class SampleModel(torch.nn.Module):
                 feature_mix = torch.tensor([]).to(device=x.device)
                 candidate_feature = torch.tensor([]).to(device=x.device)
 
-                time_start = time.time()
                 # generate candidate feature mix
                 for k in candidate_set:
                     item = torch.cat(
@@ -121,38 +115,31 @@ class SampleModel(torch.nn.Module):
                 dropout_matrix = torch.ones_like(candidate_feature, device=x.device) - drop_rate
                 candidate_feature = candidate_feature.mul(torch.bernoulli(dropout_matrix).long())
                 del dropout_matrix
-                print('candidate feature mix and drop use {} s'.format(time.time() - time_start))
 
-                time_start = time.time()
                 add_rate = torch.mm(feature_mix, self.probablity_coefficient).view(1, -1)
-                # add_rate = add_rate.softmax(dim=0).view(1, -1)
-                # add_rate = F.softmax(add_rate, dim=0).view(1, -1)
                 add_rate = torch.cat([add_rate, torch.zeros_like(add_rate)], 0)
 
                 # gumbel softmax
                 add_rate = F.gumbel_softmax(add_rate, tau=0.1, hard=False, dim=0)
                 add_rate = torch.unsqueeze(add_rate[0], 0)
-                print('cal add rate and gumbel softmax use {} s'.format(time.time() - time_start))
-                # print(add_rate)
-                # a = input()
 
                 nor_add = add_rate.clone()
-                time_start = time.time()
                 for l in range(self.sample_num):
+                    # nor_add[0][l] /= (
+                    #         pow(len(self.adj_list[i]), 0.5) * (
+                    #     pow(len(self.adj_list[candidate_set[l]]), 0.5) if candidate_set[l] != -1 else 1))
+
                     nor_add[0][l] /= (
-                            pow(len(self.adj_list[i]), 0.5) * (
-                        pow(len(self.adj_list[candidate_set[l]]), 0.5) if candidate_set[l] != -1 else 1))
+                            deg_inv_sqrt[i] * (deg_inv_sqrt[candidate_set[l]] if candidate_set[l] != -1 else 1))
 
                 add_feature = torch.mm(nor_add, candidate_feature)
                 self_feature += add_feature
-                print('normalize and add feature use {} s'.format(time.time() - time_start))
-            feature_result = torch.cat([feature_result, self_feature], 0)
-
-            # call gc
-            gc.collect()
-            print('a node use {} s'.format(time.time() - whole_start))
-            print('{} node has caled.'.format(i))
-            print('--------------------------------------')
+                # feature_result = torch.cat([feature_result, self_feature], 0)
+                feature_result[i] += torch.squeeze(self_feature, dim=0)
+                # call gc
+                gc.collect()
+                # print('{} node has caled.'.format(i))
+                # print('--------------------------------------')
 
         # transform feature dimension
         out = torch.matmul(feature_result, self.weight)
@@ -162,11 +149,16 @@ class SampleModel(torch.nn.Module):
 
         return out
 
+    def message(self, x_j: Tensor, edge_weight: Tensor, drop_rate: float = 0) -> Tensor:
+        # random drop feature
+        x_j = x_j.mul(torch.bernoulli(torch.ones_like(x_j) - drop_rate).long())
+        return edge_weight.view(-1, 1) * x_j
+
     def fill_adj_list(self, edge_index: Adj):
         for i in range(edge_index.size(1)):
             self.adj_list[edge_index[1][i]].append(int(edge_index[0][i]))
 
-    def generate_candidate_set(self, node: int) -> list:
+    def generate_candidate_set(self, node: int, attenuate_rate: float = 0.4) -> list:
         one_hop_neighbor = set(self.adj_list[node])
         k_hop_candidates = one_hop_neighbor.copy()
         next_queue = one_hop_neighbor.copy()
@@ -177,16 +169,14 @@ class SampleModel(torch.nn.Module):
             k_hop_candidates = k_hop_candidates | cur_candidate_set
             next_queue = cur_candidate_set
         result = list(k_hop_candidates - one_hop_neighbor - {node})
-        del one_hop_neighbor
-        del k_hop_candidates
-        del next_queue
-        if len(result) < self.sample_num:
-            return result
-        else:
-            return random.sample(result, self.sample_num)
-            # return result
+        if len(result) > self.sample_num:
+            result = random.sample(result, self.sample_num)
+        for i in range(len(result)):
+            if random.random() < attenuate_rate:
+                result[i] = -1
+        return result
 
-    def roughly_generate_candidate_set(self, node: int, attenuate_rate: float = 0.1) -> list:
+    def roughly_generate_candidate_set(self, node: int, attenuate_rate: float = 0.4) -> list:
         flag_list = list(0 for i in range(len(self.adj_list)))
 
         # dyeing the neighbor nodes
@@ -207,7 +197,7 @@ class SampleModel(torch.nn.Module):
 
         return result
 
-# device = torch.device('cuda:5' if torch.cuda.is_available() else 'cpu')
+# device = torch.device('cuda:4' if torch.cuda.is_available() else 'cpu')
 #
 # node_A = torch.LongTensor(
 #     [[0, 1, 0, 0, 1, 0, 0, 0], [1, 0, 1, 0, 0, 0, 1, 0], [0, 1, 0, 0, 1, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1, 0],
