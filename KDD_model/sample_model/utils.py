@@ -1,11 +1,9 @@
 import torch
 import torch_geometric
-import math
+import numpy as np
 import random
 from torch import Tensor
-from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import Adj, OptTensor
-from torch.nn import Parameter
 
 
 # noise generate
@@ -41,6 +39,11 @@ def drop_related_edge(edge_index: Adj, remove_rate: float = 0.1) -> Tensor:
     dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
     dense_matrix = dense_matrix * (1 - remove_rate)
     dense_matrix = torch.bernoulli(dense_matrix).long()
+    # use upper triangle
+    adj = dense_matrix.numpy()
+    adj = np.triu(adj)
+    adj += adj.T
+    dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
     edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))[0]
     return edge_final
 
