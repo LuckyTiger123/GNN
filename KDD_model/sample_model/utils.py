@@ -23,7 +23,7 @@ def add_noise_edge(edge_index: Adj, add_rate: float = 0.00005, remove_rate: floa
 # add edge with parameter relates to existing edges
 def add_related_edge(edge_index: Adj, add_rate: float = 0.1, random_seed: int = 0) -> Tensor:
     edge_num = int(edge_index.size(1))
-    add_num = int(edge_num * add_rate)
+    add_num = int(edge_num * add_rate / 2)
     dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
     edge_num = dense_matrix.size(0)
     random.seed(random_seed)
@@ -31,6 +31,7 @@ def add_related_edge(edge_index: Adj, add_rate: float = 0.1, random_seed: int = 
         source_node = random.randint(0, edge_num - 1)
         des_node = random.randint(0, edge_num - 1)
         dense_matrix[source_node][des_node] = 1
+        dense_matrix[des_node][source_node] = 1
     edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
 
@@ -74,3 +75,17 @@ def average_flip_related_edge(edge_index: Adj, flip_rate: float = 0.1, random_se
         dense_matrix[source_node][des_node] = 1
     edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
+
+
+# flip feature in cora with a certain rate
+def flip_feature_for_cora(x: Tensor, flip_rate: float = 0.36) -> Tensor:
+    # we use two step to flip: step1 selects the flip node, step2 selects the flip dimension
+    if flip_rate == 0:
+        return x
+    step_flip_rate = pow(flip_rate, 0.5)
+    change_node = torch.diag(torch.bernoulli(torch.zeros(x.size(0)) + step_flip_rate)).to(device=x.device)
+    change_matrix = torch.bernoulli(
+        torch.mm(change_node, torch.ones_like(x, device=x.device)) * step_flip_rate).long().to(
+        device=x.device)
+    result = x.long() ^ change_matrix
+    return result.float()

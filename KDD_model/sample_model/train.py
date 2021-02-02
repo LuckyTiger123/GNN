@@ -4,10 +4,10 @@ import torch.nn.functional as F
 import pandas as pd
 import torch_geometric.transforms as T
 from torch_geometric.datasets import Planetoid
-# import KDD_model.sample_model.sample_model as SM
-# import KDD_model.sample_model.utils as utils
-import sample_model as SM
-import utils as utils
+import KDD_model.sample_model.sample_model as SM
+import KDD_model.sample_model.utils as utils
+# import sample_model as SM
+# import utils as utils
 
 # terminal flag
 parser = argparse.ArgumentParser(description='Specify noise parameters and add and subtract edge parameters')
