@@ -88,7 +88,7 @@ train_loss = list(0 for item in range(args.attenuate * args.drop))
 # train
 for round_num in range(args.round):
     noisy_graph = build_noise_graph()
-    feature_x = utils.flip_feature_for_cora(data.x, flip_rate=args.feature_rate)
+    feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
 
     for m in range(args.attenuate):
         attenuate_rate = attenuate_base * m

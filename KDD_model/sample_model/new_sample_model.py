@@ -159,7 +159,8 @@ class NewSampleModel(MessagePassing):
 
     def message(self, x_j: Tensor, edge_weight: Tensor, drop_rate: float = 0) -> Tensor:
         # random drop feature
-        x_j = x_j.mul(torch.bernoulli(torch.ones_like(x_j) - drop_rate).long())
+        # expand other dimension
+        x_j = x_j.mul(torch.bernoulli(torch.ones_like(x_j) - drop_rate).long()) * (1 / (1 - drop_rate))
         return edge_weight.view(-1, 1) * x_j
 
     def fill_adj_list(self, edge_index: Adj):
