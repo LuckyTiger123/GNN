@@ -40,7 +40,7 @@ def drop_related_edge(edge_index: Adj, remove_rate: float = 0.1) -> Tensor:
     dense_matrix = dense_matrix * (1 - remove_rate)
     dense_matrix = torch.bernoulli(dense_matrix).long()
     # use upper triangle
-    adj = dense_matrix.numpy()
+    adj = dense_matrix.cpu().numpy()
     adj = np.triu(adj)
     adj += adj.T
     dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
@@ -74,7 +74,7 @@ def average_flip_related_edge(edge_index: Adj, flip_rate: float = 0.1, random_se
     dense_matrix = dense_matrix * (1 - flip_rate / 2)
     dense_matrix = torch.bernoulli(dense_matrix).long()
     # use upper triangle
-    adj = dense_matrix.numpy()
+    adj = dense_matrix.cpu().numpy()
     adj = np.triu(adj)
     adj += adj.T
     dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
