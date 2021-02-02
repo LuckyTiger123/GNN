@@ -12,8 +12,20 @@ class DropEdgeModel(torch.nn.Module):
         self.conv1 = torch_geometric.nn.GCNConv(feature_num, 16)
         self.conv2 = torch_geometric.nn.GCNConv(16, output_num)
 
-    def forward(self):
-        return
+    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.3):
+        if self.training:
+            adj = drop_edge(edge_index, drop_rate)
+        else:
+            adj = edge_index
+        x = x * (1 / (1 - drop_rate))
+        x = F.relu(self.conv1(x, adj))
+        x = F.dropout(x, training=self.training)
+        x = self.conv2(x, adj)
+        return x
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
 
 
 def drop_edge(edge_index: Tensor, drop_rate: float = 0.5) -> Tensor:
@@ -27,11 +39,3 @@ def drop_edge(edge_index: Tensor, drop_rate: float = 0.5) -> Tensor:
     dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
     edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))[0]
     return edge_final
-
-
-node_A = torch.LongTensor(
-    [[0, 1, 0, 0, 1, 0, 0, 0], [1, 0, 1, 0, 0, 0, 1, 0], [0, 1, 0, 0, 1, 0, 0, 1], [0, 0, 0, 0, 0, 0, 1, 0],
-     [1, 0, 1, 0, 0, 1, 0, 0], [0, 0, 0, 0, 1, 0, 0, 1], [0, 1, 0, 1, 0, 0, 0, 0], [0, 0, 1, 0, 0, 1, 0, 0]])
-edge_index = torch_geometric.utils.dense_to_sparse(torch.squeeze(node_A, dim=0))[0]
-
-drop_edge(edge_index)

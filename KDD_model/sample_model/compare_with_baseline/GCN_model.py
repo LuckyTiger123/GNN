@@ -18,6 +18,10 @@ class GCNModel(torch.nn.Module):
 
         return x
 
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+
 # optimizer = torch.optim.Adam([
 #     dict(params=model.conv1.parameters(), weight_decay=5e-4),
 #     dict(params=model.conv2.parameters(), weight_decay=0)
