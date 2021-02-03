@@ -4,6 +4,7 @@ import torch
 from torch.autograd import Variable
 from numbers import Number
 
+
 def accuracy(output, labels):
     """Return accuracy of output compared to labels.
 
@@ -28,6 +29,7 @@ def accuracy(output, labels):
     correct = correct.sum()
     return correct / len(labels)
 
+
 def to_np_array(*arrays, **kwargs):
     array_list = []
     for array in arrays:
@@ -35,8 +37,11 @@ def to_np_array(*arrays, **kwargs):
             if array.is_cuda:
                 array = array.cpu()
             array = array.data
-        if isinstance(array, torch.Tensor) or isinstance(array, torch.FloatTensor) or isinstance(array, torch.LongTensor) or isinstance(array, torch.ByteTensor) or \
-           isinstance(array, torch.cuda.FloatTensor) or isinstance(array, torch.cuda.LongTensor) or isinstance(array, torch.cuda.ByteTensor):
+        if isinstance(array, torch.Tensor) or isinstance(array, torch.FloatTensor) or isinstance(array,
+                                                                                                 torch.LongTensor) or isinstance(
+            array, torch.ByteTensor) or \
+                isinstance(array, torch.cuda.FloatTensor) or isinstance(array, torch.cuda.LongTensor) or isinstance(
+            array, torch.cuda.ByteTensor):
             if array.is_cuda:
                 array = array.cpu()
             array = array.numpy()
@@ -56,12 +61,14 @@ def to_np_array(*arrays, **kwargs):
         array_list = array_list[0]
     return array_list
 
+
 def edge_index_2_csr(edge_index, size):
     """Edge index (PyG COO format) transformed to csr format."""
     csr_matrix = sp.csr_matrix(
         (np.ones(edge_index.shape[1]), to_np_array(edge_index)),
         shape=(size, size))
     return csr_matrix
+
 
 def process_data_for_nettack(data):
     data.features = sp.csr_matrix(to_np_array(data.x))
@@ -71,6 +78,17 @@ def process_data_for_nettack(data):
     data.idx_val = np.where(to_np_array(data.val_mask))[0]
     data.idx_test = np.where(to_np_array(data.test_mask))[0]
     return data
+
+
+def process_data_for_nettack_on_noisy_graph(x, edge_index, data):
+    data.features = sp.csr_matrix(to_np_array(x))
+    data.adj = edge_index_2_csr(edge_index, size=data.x.shape[0])
+    data.labels = to_np_array(data.y)
+    data.idx_train = np.where(to_np_array(data.train_mask))[0]
+    data.idx_val = np.where(to_np_array(data.val_mask))[0]
+    data.idx_test = np.where(to_np_array(data.test_mask))[0]
+    return data
+
 
 def normalize_feature(mx):
     """Row-normalize sparse matrix
@@ -94,6 +112,7 @@ def normalize_feature(mx):
     mx = r_mat_inv.dot(mx)
     return mx
 
+
 def normalize_adj(mx):
     """Normalize sparse adjacency matrix,
     A' = (D + I)^-1/2 * ( A + I ) * (D + I)^-1/2
@@ -111,24 +130,26 @@ def normalize_adj(mx):
     """
     if type(mx) is not sp.lil.lil_matrix:
         mx = mx.tolil()
-    if mx[0, 0] == 0 :
+    if mx[0, 0] == 0:
         mx = mx + sp.eye(mx.shape[0])
     rowsum = np.array(mx.sum(1))
-    r_inv = np.power(rowsum, -1/2).flatten()
+    r_inv = np.power(rowsum, -1 / 2).flatten()
     r_inv[np.isinf(r_inv)] = 0.
     r_mat_inv = sp.diags(r_inv)
     mx = r_mat_inv.dot(mx)
     mx = mx.dot(r_mat_inv)
     return mx
 
+
 def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     """Convert a scipy sparse matrix to a torch sparse tensor."""
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
-    sparserow=torch.LongTensor(sparse_mx.row).unsqueeze(1)
-    sparsecol=torch.LongTensor(sparse_mx.col).unsqueeze(1)
-    sparseconcat=torch.cat((sparserow, sparsecol),1)
-    sparsedata=torch.FloatTensor(sparse_mx.data)
-    return torch.sparse.FloatTensor(sparseconcat.t(),sparsedata,torch.Size(sparse_mx.shape))
+    sparserow = torch.LongTensor(sparse_mx.row).unsqueeze(1)
+    sparsecol = torch.LongTensor(sparse_mx.col).unsqueeze(1)
+    sparseconcat = torch.cat((sparserow, sparsecol), 1)
+    sparsedata = torch.FloatTensor(sparse_mx.data)
+    return torch.sparse.FloatTensor(sparseconcat.t(), sparsedata, torch.Size(sparse_mx.shape))
+
 
 def preprocess(adj, features, labels, preprocess_adj=False, preprocess_feature=False, sparse=False, device='cpu'):
     """Convert adj, features, labels from array or sparse matrix to
@@ -166,6 +187,7 @@ def preprocess(adj, features, labels, preprocess_adj=False, preprocess_feature=F
         features = torch.FloatTensor(np.array(features.todense()))
         adj = torch.FloatTensor(adj.todense())
     return adj.to(device), features.to(device), labels.to(device)
+
 
 def to_tensor(adj, features, labels=None, device='cpu'):
     """Convert adj, features, labels from array or sparse matrix to

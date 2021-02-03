@@ -15,6 +15,7 @@ import utils as utils
 
 # terminal flag
 parser = argparse.ArgumentParser(description='Specify noise parameters and add and subtract edge parameters')
+parser.add_argument('-ds', '--dataset', choices=['Cora', 'CiteSeer', 'PubMed'], default='Cora')
 parser.add_argument('-t', '--type', choices=['add', 'drop', 'flip', 'aflip'], default='flip')
 parser.add_argument('-r', '--rate', type=float, default=0.2)
 parser.add_argument('-fr', '--feature_rate', type=float, default=0)
@@ -54,7 +55,8 @@ class TwoLayerModel(torch.nn.Module):
 device = torch.device('cuda:{}'.format(args.cuda) if torch.cuda.is_available() else 'cpu')
 
 # collect dataset
-dataset = Planetoid(root="/home/luckytiger/TestDataset/Cora", name="Cora", transform=T.NormalizeFeatures())
+dataset = Planetoid(root="/home/luckytiger/TestDataset/{}".format(args.dataset), name=args.dataset,
+                    transform=T.NormalizeFeatures())
 data = dataset[0].to(device=device)
 
 
@@ -138,7 +140,8 @@ for round_num in range(args.round):
             train_loss[count] += train_loss_under_best_validate
 
 # write to file
-agg_table = pd.read_excel('/home/luckytiger/GNN/KDD_model/model_result/agg_result/feature_change_average_result.xlsx')
+agg_table = pd.read_excel(
+    '/home/luckytiger/GNN/KDD_model/model_result/agg_result/feature_change_average_result_with_dataset.xlsx')
 for m in range(args.attenuate):
     attenuate_rate = attenuate_base * m
     for n in range(args.drop):
@@ -151,11 +154,12 @@ for m in range(args.attenuate):
                                              'acc_on_test': test_result[count] / args.round,
                                              'acc_on_val': best_val[count] / args.round,
                                              'loss_on_train': train_loss[count] / args.round,
-                                             'sample_round': args.round}
+                                             'sample_round': args.round, 'dataset': args.dataset}
 
 agg_table = agg_table[
     ['type', 'edge_rate', 'feature_rate', 'attenuate', 'drop', 'lr', 'epoch', 'acc_on_test', 'acc_on_val',
-     'loss_on_train', 'sample_round']]
-agg_table.to_excel('/home/luckytiger/GNN/KDD_model/model_result/agg_result/feature_change_average_result.xlsx')
+     'loss_on_train', 'sample_round', 'dataset']]
+agg_table.to_excel(
+    '/home/luckytiger/GNN/KDD_model/model_result/agg_result/feature_change_average_result_with_dataset.xlsx')
 
 print('mission complete!')

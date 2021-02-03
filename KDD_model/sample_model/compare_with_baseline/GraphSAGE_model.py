@@ -18,4 +18,8 @@ class SAGEModel(torch.nn.Module):
 
         return x
 
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+
 # optimizer = torch.optim.Adam(model.parameters(), lr=0.005, weight_decay=5e-4)

@@ -167,3 +167,25 @@ class NewSampleModelLayer(MessagePassing):
             return self.k_hop_nerghbor[node]
         else:
             return np.random.choice(self.k_hop_nerghbor[node], self.sample_num, replace=False)
+
+
+# 2 layer class
+class TwoLayerModel(torch.nn.Module):
+    def __init__(self, feature_num, output_num):
+        super(TwoLayerModel, self).__init__()
+        self.conv1 = torch_geometric.nn.GCNConv(feature_num, 32)
+        self.conv2 = NewSampleModelLayer(32, output_num)
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()
+
+    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.1, add_rate: float = 0.1,
+                mask: Tensor = None):
+        x = self.conv1(x, edge_index)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training)
+        x = self.conv2(x, edge_index, drop_rate, add_rate, mask=mask)
+        return x
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        self.conv2.reset_parameters()

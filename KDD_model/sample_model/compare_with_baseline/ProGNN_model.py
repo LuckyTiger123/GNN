@@ -11,6 +11,7 @@ from deeprobust.graph.defense.pgd import PGD, prox_operators
 
 from baseline_utils import accuracy
 
+
 class ProGNN:
     """ ProGNN (Properties Graph Neural Network). See more details in Graph Structure Learning for Robust Graph Neural Networks, KDD 2020, https://arxiv.org/abs/2005.10203.
         See details in https://github.com/ChandlerBang/Pro-GNN.
@@ -38,6 +39,7 @@ class ProGNN:
         self.best_graph = None
         self.weights = None
         self.estimator = None
+        self.test_acc_under_best_val = 0
 
         # params
         self.symmetric = False
@@ -52,7 +54,7 @@ class ProGNN:
         self.inner_steps = 2
         self.outer_steps = 1
 
-    def fit(self, features, adj, labels, idx_train, idx_val, train_iters=600):
+    def fit(self, features, adj, labels, idx_train, idx_val, idx_test, train_iters=600):
         """Train Pro-GNN.
 
         Parameters
@@ -84,7 +86,9 @@ class ProGNN:
                                 lr=self.lr_adj, alphas=[self.alpha])
 
         warnings.warn(
-            "If you find the nuclear proximal operator runs too slow, you can modify line 77 to use prox_operators.prox_nuclear_cuda instead of prox_operators.prox_nuclear to perform the proximal on GPU. See details in https://github.com/ChandlerBang/Pro-GNN/issues/1")
+            "If you find the nuclear proximal operator runs too slow, you can modify line 77 to use "
+            "prox_operators.prox_nuclear_cuda instead of prox_operators.prox_nuclear to perform the proximal on GPU. "
+            "See details in https://github.com/ChandlerBang/Pro-GNN/issues/1")
         self.optimizer_nuclear = PGD(estimator.parameters(),
                                      proxs=[prox_operators.prox_nuclear_cuda],
                                      lr=self.lr_adj, alphas=[self.beta])
@@ -92,10 +96,10 @@ class ProGNN:
         # Train model
         for epoch in range(train_iters):
             for i in range(int(self.outer_steps)):
-                self._train_adj(epoch, features, adj, labels, idx_train, idx_val)
+                self._train_adj(epoch, features, adj, labels, idx_train, idx_val, idx_test)
 
             for i in range(int(self.inner_steps)):
-                self._train_gcn(epoch, features, estimator.estimated_adj, labels, idx_train, idx_val)
+                self._train_gcn(epoch, features, estimator.estimated_adj, labels, idx_train, idx_val, idx_test)
 
         print("Optimization Finished!")
 
@@ -103,7 +107,7 @@ class ProGNN:
         print("picking the best model according to validation performance")
         self.model.load_state_dict(self.weights)
 
-    def _train_gcn(self, epoch, features, adj, labels, idx_train, idx_val):
+    def _train_gcn(self, epoch, features, adj, labels, idx_train, idx_val, idx_test):
         estimator = self.estimator
         adj = estimator.normalize()
 
@@ -123,18 +127,20 @@ class ProGNN:
 
         loss_val = F.nll_loss(output[idx_val], labels[idx_val])
         acc_val = accuracy(output[idx_val], labels[idx_val])
+        acc_test = accuracy(output[idx_test], labels[idx_test])
 
         if acc_val > self.best_val_acc:
             self.best_val_acc = acc_val
             self.best_graph = adj.detach()
             self.weights = deepcopy(self.model.state_dict())
+            self.test_acc_under_best_val = acc_test
 
         if loss_val < self.best_val_loss:
             self.best_val_loss = loss_val
             self.best_graph = adj.detach()
             self.weights = deepcopy(self.model.state_dict())
 
-    def _train_adj(self, epoch, features, adj, labels, idx_train, idx_val):
+    def _train_adj(self, epoch, features, adj, labels, idx_train, idx_val, idx_test):
         estimator = self.estimator
         t = time.time()
         estimator.train()
@@ -152,6 +158,7 @@ class ProGNN:
         output = self.model(features, normalized_adj)
         loss_gcn = F.nll_loss(output[idx_train], labels[idx_train])
         acc_train = accuracy(output[idx_train], labels[idx_train])
+        acc_test = accuracy(output[idx_test], labels[idx_test])
 
         loss_symmetric = torch.norm(estimator.estimated_adj - estimator.estimated_adj.t(), p="fro")
 
@@ -184,22 +191,25 @@ class ProGNN:
 
         loss_val = F.nll_loss(output[idx_val], labels[idx_val])
         acc_val = accuracy(output[idx_val], labels[idx_val])
-        if epoch % 20 == 0:
-            print('Epoch: {:04d}'.format(epoch + 1),
-                  'acc_train: {:.4f}'.format(acc_train.item()),
-                  'loss_val: {:.4f}'.format(loss_val.item()),
-                  'acc_val: {:.4f}'.format(acc_val.item()),
-                  'time: {:.4f}s'.format(time.time() - t))
+
+        print('ProGNN: ',
+              'Epoch: {:04d}'.format(epoch + 1),
+              'acc_train: {:.4f}'.format(acc_train.item()),
+              'loss_val: {:.4f}'.format(loss_val.item()),
+              'acc_val: {:.4f}'.format(acc_val.item()),
+              'time: {:.4f}s'.format(time.time() - t))
 
         if acc_val > self.best_val_acc:
             self.best_val_acc = acc_val
             self.best_graph = normalized_adj.detach()
             self.weights = deepcopy(self.model.state_dict())
+            self.test_acc_under_best_val = acc_test
 
         if loss_val < self.best_val_loss:
             self.best_val_loss = loss_val
             self.best_graph = normalized_adj.detach()
             self.weights = deepcopy(self.model.state_dict())
+            self.test_acc_under_best_val = acc_test
 
     def eval(self):
         self.model.eval()
@@ -266,5 +276,3 @@ class EstimateAdj(nn.Module):
         mx = r_mat_inv @ mx
         mx = mx @ r_mat_inv
         return mx
-
-

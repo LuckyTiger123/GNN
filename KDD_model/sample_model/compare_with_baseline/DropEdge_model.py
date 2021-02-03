@@ -15,9 +15,9 @@ class DropEdgeModel(torch.nn.Module):
     def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.3):
         if self.training:
             adj = drop_edge(edge_index, drop_rate)
+            x = x * (1 / (1 - drop_rate))
         else:
             adj = edge_index
-        x = x * (1 / (1 - drop_rate))
         x = F.relu(self.conv1(x, adj))
         x = F.dropout(x, training=self.training)
         x = self.conv2(x, adj)
@@ -33,7 +33,7 @@ def drop_edge(edge_index: Tensor, drop_rate: float = 0.5) -> Tensor:
     dense_matrix = dense_matrix * (1 - drop_rate)
     dense_matrix = torch.bernoulli(dense_matrix).long()
     # use upper triangle
-    adj = dense_matrix.numpy()
+    adj = dense_matrix.cpu().numpy()
     adj = np.triu(adj)
     adj += adj.T
     dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
