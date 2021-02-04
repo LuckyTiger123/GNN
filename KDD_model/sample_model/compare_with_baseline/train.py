@@ -37,6 +37,7 @@ args = parser.parse_args()
 
 # device selection
 device = torch.device('cuda:{}'.format(args.cuda) if torch.cuda.is_available() else 'cpu')
+# device = 'cpu'
 
 # collect dataset
 dataset = Planetoid(root="/home/luckytiger/TestDataset/{}".format(args.dataset), name=args.dataset,
@@ -45,7 +46,7 @@ data = dataset[0].to(device=device)
 
 
 # build noise graph
-def build_noise_graph():
+def build_noise_graph(random_seed: int = 0):
     # build noisy graph
     if args.type == 'add':
         ng = utils.add_related_edge(data.edge_index, add_rate=args.rate)
@@ -54,7 +55,8 @@ def build_noise_graph():
     elif args.type == 'flip':
         ng = utils.flip_related_edge(data.edge_index, flip_rate=args.rate)
     elif args.type == 'aflip':
-        ng = utils.average_flip_related_edge(data.edge_index, flip_rate=args.rate)
+        ng = utils.average_flip_related_edge_with_sparse_matrix(data.edge_index, data.x.size(0),
+                                                                random_seed=random_seed, flip_rate=args.rate)
     return ng
 
 
@@ -239,9 +241,18 @@ def train_GRAND_model(x, edge_index, k):
         tem = 0.2
         order = 5
 
+    edge_index, _ = torch_geometric.utils.add_self_loops(edge_index, num_nodes=data.x.size(0))
+    row, col = edge_index
+    deg = torch_geometric.utils.degree(col, x.size(0), dtype=x.dtype)
+    deg_inv_sqrt = deg.pow(-0.5)
+    edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+
     model = GRAND.GRANDModel(dataset.num_features, dataset.num_classes, input_droprate=input_droprate,
                              hidden_droprate=hidden_droprate).to(device=device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=5e-4)
+
+    sparse_tensor = torch.sparse.FloatTensor(edge_index, edge_weight,
+                                             torch.Size([feature_x.size(0), feature_x.size(0)])).float()
 
     best_validate_rate = 0
     test_rate_under_best_validate = 0
@@ -254,7 +265,7 @@ def train_GRAND_model(x, edge_index, k):
 
         X_list = []
         for i in range(K):
-            X_list.append(GRAND.rand_prop(edge_index, x, dropnode_rate, order, training=True))
+            X_list.append(GRAND.rand_prop(sparse_tensor, x, dropnode_rate, order, training=True))
 
         output_list = []
         for i in range(K):
@@ -268,12 +279,12 @@ def train_GRAND_model(x, edge_index, k):
         loss_consis = GRAND.consis_loss(output_list, tem, lam)
         loss_train = loss_train + loss_consis
         loss_train.backward()
-        
+
         # validate set
         model.eval()
         with torch.no_grad():
             X = x
-            X = GRAND.rand_prop(edge_index, X, dropnode_rate, order, training=False)
+            X = GRAND.rand_prop(sparse_tensor, X, dropnode_rate, order, training=False)
             _, pred = model(X).max(dim=1)
             validate_correct = int(pred[data.val_mask].eq(data.y[data.val_mask]).sum().item())
             validate_acc = validate_correct / int(data.val_mask.sum())
@@ -358,7 +369,19 @@ def train_our_model(x, edge_index, k):
         print('for the {} th our model and the {} epoch, the loss is {}.'.format(k, epoch, float(loss)))
         optimizer.step()
 
-        return best_validate_rate, test_rate_under_best_validate, train_loss_under_best_validate
+    return best_validate_rate, test_rate_under_best_validate, train_loss_under_best_validate
+
+
+test_acc_sample_result = list(list() for i in range(8))
+val_acc_sample_result = list(list() for i in range(8))
+train_loss_sample_result = list(list() for i in range(8))
+
+# train
+for round_num in range(args.round):
+    noisy_graph = build_noise_graph(round_num)
+    feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
+    
+
 
 
 # data operation
@@ -366,8 +389,20 @@ noisy_graph = build_noise_graph()
 
 feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
 
-sparse_tensor = torch.sparse.FloatTensor(noisy_graph[0], noisy_graph[1],
-                                         torch.Size([feature_x.size(0), feature_x.size(0)])).float()
+# noisy_graph, _ = torch_geometric.utils.add_self_loops(noisy_graph, num_nodes=data.x.size(0))
+# row, col = noisy_graph
+# deg = torch_geometric.utils.degree(col, feature_x.size(0), dtype=feature_x.dtype)
+# deg_inv_sqrt = deg.pow(-0.5)
+# edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
+#
+# print(edge_weight.size())
+# print(edge_weight)
+#
+# sparse_tensor = torch.sparse.FloatTensor(noisy_graph, edge_weight,
+#                                          torch.Size([feature_x.size(0), feature_x.size(0)])).float()
 
-a = train_GRAND_model(feature_x, sparse_tensor, 1)
+# a = torch.spmm(sparse_tensor, feature_x) - torch.mm(
+#     torch.squeeze(torch_geometric.utils.to_dense_adj(noisy_graph[0])).float().to(device=device), feature_x)
+
+a = train_GRAND_model(feature_x, noisy_graph, 1)
 print(a)

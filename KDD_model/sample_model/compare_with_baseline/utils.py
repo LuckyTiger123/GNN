@@ -1,6 +1,7 @@
 import torch
 import random
 import torch_geometric
+import torch_sparse
 import numpy as np
 from torch import Tensor
 import scipy.sparse as sp
@@ -33,7 +34,7 @@ def add_related_edge(edge_index: Adj, add_rate: float = 0.1, random_seed: int = 
         des_node = random.randint(0, edge_num - 1)
         dense_matrix[source_node][des_node] = 1
         dense_matrix[des_node][source_node] = 1
-    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)
+    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
 
 
@@ -47,7 +48,7 @@ def drop_related_edge(edge_index: Adj, remove_rate: float = 0.1) -> Tensor:
     adj = np.triu(adj)
     adj += adj.T
     dense_matrix = torch.from_numpy(adj).to(device=edge_index.device)
-    edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))
+    edge_final = torch_geometric.utils.dense_to_sparse(torch.squeeze(dense_matrix, dim=0))[0]
     return edge_final
 
 
@@ -63,7 +64,7 @@ def flip_related_edge(edge_index: Adj, flip_rate: float = 0.1, random_seed: int 
         des_node = random.randint(0, edge_num - 1)
         dense_matrix[source_node][des_node] = dense_matrix[source_node][des_node] ^ 1
         dense_matrix[des_node][source_node] = dense_matrix[des_node][source_node] ^ 1
-    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)
+    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
 
 
@@ -86,12 +87,57 @@ def average_flip_related_edge(edge_index: Adj, flip_rate: float = 0.1, random_se
         des_node = random.randint(0, edge_num - 1)
         dense_matrix[source_node][des_node] = 1
         dense_matrix[des_node][source_node] = 1
-    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)
+    edge_final = torch_geometric.utils.dense_to_sparse(dense_matrix)[0]
     return edge_final
 
 
+# flip sparse matrix
+def average_flip_related_edge_with_sparse_matrix(edge_index: Adj, node_num: int, flip_rate: float = 0.5,
+                                                 random_seed: int = 0) -> Tensor:
+    random.seed(random_seed)
+    edge_num = int(edge_index.size(1))
+    change_edge_num = int(edge_num * flip_rate / 4)
+    edge_set = set()
+    for i in range(edge_index.size(-1)):
+        if edge_index[0][i] > edge_index[1][i]:
+            edge_set.add(int(edge_index[1][i]) * 100000 + int(edge_index[0][i]))
+        else:
+            edge_set.add(int(edge_index[0][i]) * 100000 + int(edge_index[1][i]))
+
+    edge_set = set(random.sample(list(edge_set), int(edge_num / 2 - change_edge_num)))
+
+    i = 0
+    while i < change_edge_num:
+        source_node = random.randint(0, node_num - 1)
+        des_node = random.randint(0, node_num - 1)
+        if source_node == des_node:
+            continue
+        if source_node > des_node:
+            item = des_node * 100000 + source_node
+        else:
+            item = source_node * 100000 + des_node
+
+        if item not in edge_set:
+            edge_set.add(item)
+            i += 1
+
+    np_edge_index = np.array([[int(item / 100000), int(item % 100000)] for item in edge_set])
+    np_edge_index_invert = np.array([[int(item % 100000), int(item / 100000)] for item in edge_set])
+    final_edge_index = torch.from_numpy(np.append(np_edge_index, np_edge_index_invert, axis=0)).T.to(
+        device=edge_index.device)
+
+    final_edge_index = \
+        torch_sparse.spspmm(final_edge_index, torch.ones(final_edge_index.size(-1)).to(device=edge_index.device),
+                            torch.tensor([[i for i in range(node_num)], [i for i in range(node_num)]]).to(
+                                device=edge_index.device),
+                            torch.ones(node_num).to(device=edge_index.device), node_num, node_num, node_num,
+                            coalesced=True)[0]
+
+    return final_edge_index
+
+
 # flip feature in cora with a certain rate
-def flip_feature_for_dataset(x: Tensor, flip_rate: float = 0.36) -> Tensor:
+def flip_feature_for_dataset(x: Tensor, flip_rate: float = 0.01) -> Tensor:
     # we use two step to flip: step1 selects the flip node, step2 selects the flip dimension
     if flip_rate == 0:
         return x

@@ -67,6 +67,11 @@ class NewSampleModel(MessagePassing):
 
     def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.4, add_edge_rate: float = 1,
                 mask: Tensor = None):
+        # adj generate
+        if self.k_hop_nerghbor is None:
+            self.k_hop_nerghbor = list()
+            self.fill_k_hop_with_sparse_matrix(edge_index, x.size(0))
+
         # add self loop
         if self.add_self_loops:
             edge_index, _ = torch_geometric.utils.add_self_loops(edge_index, num_nodes=x.size(0))
@@ -78,11 +83,6 @@ class NewSampleModel(MessagePassing):
             self.deg_inv_sqrt = deg.pow(-0.5)
             self.edge_weight = self.deg_inv_sqrt[row] * self.deg_inv_sqrt[col]
             # print(self.edge_weight.size())
-
-        # adj generate
-        if self.k_hop_nerghbor is None:
-            self.k_hop_nerghbor = list()
-            self.fill_k_hop_neighbor(edge_index)
 
         # for eval
         if not self.training:
@@ -113,7 +113,7 @@ class NewSampleModel(MessagePassing):
                 feature_mix = torch.tensor([]).to(device=x.device)
                 candidate_feature = torch.tensor([]).to(device=x.device)
 
-                if candidate_set.size == 1:
+                if candidate_set.size == 0:
                     continue
 
                 # generate candidate feature mix
@@ -182,6 +182,35 @@ class NewSampleModel(MessagePassing):
             self.k_hop_nerghbor.append(item)
         return
 
+    def fill_k_hop_with_sparse_matrix(self, edge_index: Adj, node_num: int):
+        k_hop_neighbor = list(set() for i in range(node_num))
+        one_hop_neighbor = list(set() for i in range(node_num))
+
+        for i in range(edge_index.size(-1)):
+            one_hop_neighbor[edge_index[0][i]].add(int(edge_index[1][i]))
+
+        two_hop_neighbor = torch_sparse.spspmm(edge_index, torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                               edge_index, torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                               node_num, node_num, node_num)[0]
+        for i in range(two_hop_neighbor.size(-1)):
+            k_hop_neighbor[two_hop_neighbor[0][i]].add(int(two_hop_neighbor[1][i]))
+
+        cur_matrix = two_hop_neighbor
+
+        for k in range(2, self.k_hop):
+            cur_matrix = \
+                torch_sparse.spspmm(cur_matrix, torch.ones(cur_matrix.size(-1)).to(device=edge_index.device),
+                                    edge_index,
+                                    torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                    node_num, node_num, node_num)[0]
+            for i in range(cur_matrix.size(-1)):
+                k_hop_neighbor[cur_matrix[0][i]].add(int(cur_matrix[1][i]))
+
+        # self.k_hop_nerghbor = list()
+        for i in range(node_num):
+            self.k_hop_nerghbor.append(np.array(list(k_hop_neighbor[i] - one_hop_neighbor[i] - {i})))
+        return
+
     def generate_candidate_set(self, node: int, add_rate: float = 0.1) -> list:
         one_hop_neighbor = set(self.adj_list[node])
         k_hop_candidates = one_hop_neighbor.copy()
@@ -242,6 +271,12 @@ class NewSampleModel(MessagePassing):
 # feature_M = torch.Tensor(
 #     [[1, 2, 3], [4, 5, 6], [7, 8, 9], [10, 11, 12], [13, 14, 15], [16, 17, 18], [19, 20, 21], [22, 23, 24]])
 # model = NewSampleModel(3, 2)
+#
+# model.fill_k_hop_with_sparse_matrix(edge_indexk, 8)
+# print(model.k_hop_nerghbor)
+# model.k_hop_nerghbor = list()
+# model.fill_k_hop_neighbor(edge_indexk)
+# print(model.k_hop_nerghbor)
 # #
 # model.train()
 # out = model(feature_M, edge_indexk)

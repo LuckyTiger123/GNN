@@ -15,13 +15,13 @@ import utils as utils
 
 # terminal flag
 parser = argparse.ArgumentParser(description='Specify noise parameters and add and subtract edge parameters')
-parser.add_argument('-ds', '--dataset', choices=['Cora', 'CiteSeer', 'PubMed'], default='Cora')
-parser.add_argument('-t', '--type', choices=['add', 'drop', 'flip', 'aflip'], default='flip')
+parser.add_argument('-ds', '--dataset', choices=['Cora', 'CiteSeer', 'PubMed'], default='PubMed')
+parser.add_argument('-t', '--type', choices=['add', 'drop', 'flip', 'aflip'], default='aflip')
 parser.add_argument('-r', '--rate', type=float, default=0.2)
 parser.add_argument('-fr', '--feature_rate', type=float, default=0)
-parser.add_argument('-a', '--attenuate', type=int, default=2)
-parser.add_argument('-d', '--drop', type=int, default=2)
-parser.add_argument('-c', '--cuda', type=int, default=0)
+parser.add_argument('-a', '--attenuate', type=int, default=4)
+parser.add_argument('-d', '--drop', type=int, default=4)
+parser.add_argument('-c', '--cuda', type=int, default=4)
 parser.add_argument('-e', '--epoch', type=int, default=200)
 parser.add_argument('-l', '--learning_rate', type=float, default=0.005)
 # parser.add_argument('-f', '--form', type=int, choices=[0, 1], default=0)
@@ -40,11 +40,12 @@ class TwoLayerModel(torch.nn.Module):
         self.conv1.reset_parameters()
         self.conv2.reset_parameters()
 
-    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.4, attenuate_rate: float = 0.4,
+    def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.1, add_rate: float = 0.1,
                 mask: Tensor = None):
         x = self.conv1(x, edge_index)
-        x = F.elu(x)
-        x = self.conv2(x, edge_index, drop_rate, attenuate_rate, mask=mask)
+        x = F.relu(x)
+        x = F.dropout(x, training=self.training)
+        x = self.conv2(x, edge_index, drop_rate, add_rate, mask=mask)
         return x
 
     def reset_parameters(self):
@@ -61,16 +62,17 @@ data = dataset[0].to(device=device)
 
 
 # build noise graph
-def build_noise_graph():
+def build_noise_graph(random_seed: int):
     # build noisy graph
     if args.type == 'add':
-        noisy_graph = utils.add_related_edge(data.edge_index, add_rate=args.rate)
+        noisy_graph = utils.add_related_edge(data.edge_index, add_rate=args.rate, random_seed=random_seed)
     elif args.type == 'drop':
         noisy_graph = utils.drop_related_edge(data.edge_index, remove_rate=args.rate)
     elif args.type == 'flip':
-        noisy_graph = utils.flip_related_edge(data.edge_index, flip_rate=args.rate)
+        noisy_graph = utils.flip_related_edge(data.edge_index, flip_rate=args.rate, random_seed=random_seed)
     elif args.type == 'aflip':
-        noisy_graph = utils.average_flip_related_edge(data.edge_index, flip_rate=args.rate)
+        noisy_graph = utils.average_flip_related_edge_with_sparse_matrix(data.edge_index, data.x.size(0),
+                                                                         flip_rate=args.rate, random_seed=random_seed)
     return noisy_graph
 
 
@@ -89,7 +91,7 @@ train_loss = list(0 for item in range(args.attenuate * args.drop))
 
 # train
 for round_num in range(args.round):
-    noisy_graph = build_noise_graph()
+    noisy_graph = build_noise_graph(round_num)
     feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
 
     for m in range(args.attenuate):

@@ -2,6 +2,7 @@ import torch
 import math
 import random
 import torch_geometric
+import torch_sparse
 import numpy as np
 import torch.nn.functional as F
 from torch import Tensor
@@ -61,6 +62,11 @@ class NewSampleModelLayer(MessagePassing):
 
     def forward(self, x: Tensor, edge_index: Adj, drop_rate: float = 0.4, add_edge_rate: float = 1,
                 mask: Tensor = None):
+        # adj generate
+        if self.k_hop_nerghbor is None:
+            self.k_hop_nerghbor = list()
+            self.fill_k_hop_with_sparse_matrix(edge_index, x.size(0))
+
         # add self loop
         if self.add_self_loops:
             edge_index, _ = torch_geometric.utils.add_self_loops(edge_index, num_nodes=x.size(0))
@@ -72,11 +78,6 @@ class NewSampleModelLayer(MessagePassing):
             self.deg_inv_sqrt = deg.pow(-0.5)
             self.edge_weight = self.deg_inv_sqrt[row] * self.deg_inv_sqrt[col]
             # print(self.edge_weight.size())
-
-        # adj generate
-        if self.k_hop_nerghbor is None:
-            self.k_hop_nerghbor = list()
-            self.fill_k_hop_neighbor(edge_index)
 
         # for eval
         if not self.training:
@@ -107,7 +108,7 @@ class NewSampleModelLayer(MessagePassing):
                 feature_mix = torch.tensor([]).to(device=x.device)
                 candidate_feature = torch.tensor([]).to(device=x.device)
 
-                if candidate_set.size == 1:
+                if candidate_set.size == 0:
                     continue
 
                 # generate candidate feature mix
@@ -147,19 +148,33 @@ class NewSampleModelLayer(MessagePassing):
         x_j = x_j.mul(torch.bernoulli(torch.ones_like(x_j) - drop_rate).long()) * (1 / (1 - drop_rate))
         return edge_weight.view(-1, 1) * x_j
 
-    def fill_k_hop_neighbor(self, edge_index: Adj):  # TODO:concentrate 2 hop only, and handle lonely node
-        dense_matrix = torch.squeeze(torch_geometric.utils.to_dense_adj(edge_index)).to(device=edge_index.device)
-        cur_A = torch.mm(dense_matrix, dense_matrix)
-        result = cur_A
-        for i in range(2, self.k_hop):
-            cur_A = torch.mm(cur_A, dense_matrix)
-            result += cur_A
-        result = torch.where(result > 0, torch.ones_like(result).to(device=edge_index.device), result)
-        result -= dense_matrix
-        result -= torch.diag(torch.ones(dense_matrix.size(0))).long().to(device=edge_index.device)
-        for i in range(dense_matrix.size(0)):
-            item = torch.squeeze(result[i].nonzero(as_tuple=False).T.cpu()).numpy()
-            self.k_hop_nerghbor.append(item)
+    def fill_k_hop_with_sparse_matrix(self, edge_index: Adj, node_num: int):
+        k_hop_neighbor = list(set() for i in range(node_num))
+        one_hop_neighbor = list(set() for i in range(node_num))
+
+        for i in range(edge_index.size(-1)):
+            one_hop_neighbor[edge_index[0][i]].add(int(edge_index[1][i]))
+
+        two_hop_neighbor = torch_sparse.spspmm(edge_index, torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                               edge_index, torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                               node_num, node_num, node_num)[0]
+        for i in range(two_hop_neighbor.size(-1)):
+            k_hop_neighbor[two_hop_neighbor[0][i]].add(int(two_hop_neighbor[1][i]))
+
+        cur_matrix = two_hop_neighbor
+
+        for k in range(2, self.k_hop):
+            cur_matrix = \
+                torch_sparse.spspmm(cur_matrix, torch.ones(cur_matrix.size(-1)).to(device=edge_index.device),
+                                    edge_index,
+                                    torch.ones(edge_index.size(-1)).to(device=edge_index.device),
+                                    node_num, node_num, node_num)[0]
+            for i in range(cur_matrix.size(-1)):
+                k_hop_neighbor[cur_matrix[0][i]].add(int(cur_matrix[1][i]))
+
+        # self.k_hop_nerghbor = list()
+        for i in range(node_num):
+            self.k_hop_nerghbor.append(np.array(list(k_hop_neighbor[i] - one_hop_neighbor[i] - {i})))
         return
 
     def generate_candidate_set_for_node(self, node: int) -> np.ndarray:
