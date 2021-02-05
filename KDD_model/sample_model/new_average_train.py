@@ -15,13 +15,13 @@ import utils as utils
 
 # terminal flag
 parser = argparse.ArgumentParser(description='Specify noise parameters and add and subtract edge parameters')
-parser.add_argument('-ds', '--dataset', choices=['Cora', 'CiteSeer', 'PubMed'], default='PubMed')
+parser.add_argument('-ds', '--dataset', choices=['Cora', 'CiteSeer', 'PubMed'], default='Cora')
 parser.add_argument('-t', '--type', choices=['add', 'drop', 'flip', 'aflip'], default='aflip')
 parser.add_argument('-r', '--rate', type=float, default=0.2)
 parser.add_argument('-fr', '--feature_rate', type=float, default=0)
 parser.add_argument('-a', '--attenuate', type=int, default=4)
 parser.add_argument('-d', '--drop', type=int, default=4)
-parser.add_argument('-c', '--cuda', type=int, default=4)
+parser.add_argument('-c', '--cuda', type=int, default=0)
 parser.add_argument('-e', '--epoch', type=int, default=200)
 parser.add_argument('-l', '--learning_rate', type=float, default=0.005)
 # parser.add_argument('-f', '--form', type=int, choices=[0, 1], default=0)

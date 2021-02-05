@@ -1,5 +1,6 @@
 import torch
 import argparse
+import time
 import torch_geometric
 import torch.nn.functional as F
 import pandas as pd
@@ -9,15 +10,25 @@ import torch_geometric.transforms as T
 from torch_geometric.datasets import Planetoid
 from deeprobust.graph.defense import GCN
 
-import KDD_model.sample_model.compare_with_baseline.Our_model as OM
-import KDD_model.sample_model.compare_with_baseline.utils as utils
-import KDD_model.sample_model.compare_with_baseline.DropEdge_model as DE
-import KDD_model.sample_model.compare_with_baseline.GAT_model as GAT
-import KDD_model.sample_model.compare_with_baseline.GCN_model as GCNM
-import KDD_model.sample_model.compare_with_baseline.GraphSAGE_model as SAGEM
-import KDD_model.sample_model.compare_with_baseline.GRAND_model as GRAND
-import KDD_model.sample_model.compare_with_baseline.ProGNN_model as ProGNN
-import KDD_model.sample_model.compare_with_baseline.RGCN_model as RGCN
+# import KDD_model.sample_model.compare_with_baseline.Our_model as OM
+# import KDD_model.sample_model.compare_with_baseline.utils as utils
+# import KDD_model.sample_model.compare_with_baseline.DropEdge_model as DE
+# import KDD_model.sample_model.compare_with_baseline.GAT_model as GAT
+# import KDD_model.sample_model.compare_with_baseline.GCN_model as GCNM
+# import KDD_model.sample_model.compare_with_baseline.GraphSAGE_model as SAGEM
+# import KDD_model.sample_model.compare_with_baseline.GRAND_model as GRAND
+# import KDD_model.sample_model.compare_with_baseline.ProGNN_model as ProGNN
+# import KDD_model.sample_model.compare_with_baseline.RGCN_model as RGCN
+
+import Our_model as OM
+import utils as utils
+import DropEdge_model as DE
+import GAT_model as GAT
+import GCN_model as GCNM
+import GraphSAGE_model as SAGEM
+import GRAND_model as GRAND
+import ProGNN_model as ProGNN
+import RGCN_model as RGCN
 
 # terminal flag
 parser = argparse.ArgumentParser(description='Specify noise parameters and add and subtract edge parameters')
@@ -28,7 +39,7 @@ parser.add_argument('-fr', '--feature_rate', type=float, default=0)
 # parser.add_argument('-a', '--attenuate', type=int, default=2)
 # parser.add_argument('-d', '--drop', type=int, default=2)
 parser.add_argument('-c', '--cuda', type=int, default=0)
-parser.add_argument('-e', '--epoch', type=int, default=200)
+parser.add_argument('-e', '--epoch', type=int, default=150)
 parser.add_argument('-l', '--learning_rate', type=float, default=0.01)
 parser.add_argument('-rd', '--round', type=int, default=10)
 parser.add_argument('-ab', '--add_base', type=float, default=0.1)
@@ -332,8 +343,25 @@ def train_our_model(x, edge_index, k):
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=5e-4)
 
     if args.dataset == 'Cora':
-        drop_rate = 0.1
-        add_rate = 0.1
+        if args.rate == 0:
+            add_rate = 0.1
+            drop_rate = 0.3
+        elif args.rate == 0.1:
+            add_rate = 0.2
+            drop_rate = 0.2
+        elif args.rate == 0.2:
+            add_rate = 0.1
+            drop_rate = 0.2
+        elif args.rate == 0.3:
+            add_rate = 0.1
+            drop_rate = 0.3
+        elif args.rate == 0.4:
+            add_rate = 0
+            drop_rate = 0.3
+        else:
+            add_rate = 0
+            drop_rate = 0.3
+
     elif args.dataset == 'CiteSeer':
         drop_rate = 0.1
         add_rate = 0.1
@@ -372,37 +400,100 @@ def train_our_model(x, edge_index, k):
     return best_validate_rate, test_rate_under_best_validate, train_loss_under_best_validate
 
 
-test_acc_sample_result = list(list() for i in range(8))
-val_acc_sample_result = list(list() for i in range(8))
-train_loss_sample_result = list(list() for i in range(8))
+timestamp = int(time.time())
+
+test_acc_table = pd.DataFrame(columns=['round', 'GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours'])
+val_acc_table = pd.DataFrame(columns=['round', 'GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours'])
+train_loss_table = pd.DataFrame(columns=['round', 'GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours'])
 
 # train
 for round_num in range(args.round):
     noisy_graph = build_noise_graph(round_num)
     feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
-    
 
+    # train GCN
+    best_val_rate_GCN, test_acc_rate_GCN, train_loss_GCN = train_GCN_model(feature_x, noisy_graph, round_num)
 
+    # train GAT
+    best_val_rate_GAT, test_acc_rate_GAT, train_loss_GAT = train_GAT_model(feature_x, noisy_graph, round_num)
 
-# data operation
-noisy_graph = build_noise_graph()
+    # train SAGE
+    best_val_rate_SAGE, test_acc_rate_SAGE, train_loss_SAGE = train_SAGE_model(feature_x, noisy_graph, round_num)
 
-feature_x = utils.flip_feature_for_dataset(data.x, flip_rate=args.feature_rate)
+    # train DropEdge
+    best_val_rate_de, test_acc_rate_de, train_loss_de = train_de_model(feature_x, noisy_graph, round_num)
 
-# noisy_graph, _ = torch_geometric.utils.add_self_loops(noisy_graph, num_nodes=data.x.size(0))
-# row, col = noisy_graph
-# deg = torch_geometric.utils.degree(col, feature_x.size(0), dtype=feature_x.dtype)
-# deg_inv_sqrt = deg.pow(-0.5)
-# edge_weight = deg_inv_sqrt[row] * deg_inv_sqrt[col]
-#
-# print(edge_weight.size())
-# print(edge_weight)
-#
-# sparse_tensor = torch.sparse.FloatTensor(noisy_graph, edge_weight,
-#                                          torch.Size([feature_x.size(0), feature_x.size(0)])).float()
+    # train GRAND
+    best_val_rate_GRAND, test_acc_rate_GRAND, train_loss_GRAND = train_GRAND_model(feature_x, noisy_graph, round_num)
 
-# a = torch.spmm(sparse_tensor, feature_x) - torch.mm(
-#     torch.squeeze(torch_geometric.utils.to_dense_adj(noisy_graph[0])).float().to(device=device), feature_x)
+    # train RGCN
+    test_acc_rate_RGCN = train_RGCN_model(feature_x, noisy_graph, round_num)
 
-a = train_GRAND_model(feature_x, noisy_graph, 1)
-print(a)
+    # train proGNN
+    test_acc_rate_proGNN = train_proGNN_model(feature_x, noisy_graph, round_num)
+
+    # train our model
+    best_val_rate_ours, test_acc_rate_ours, train_loss_ours = train_our_model(feature_x, noisy_graph, round_num)
+
+    # record result
+    test_acc_table.loc[test_acc_table.shape[0]] = {'round': round_num, 'GCN': round(test_acc_rate_GCN, 6),
+                                                   'GAT': round(test_acc_rate_GAT, 6),
+                                                   'SAGE': round(test_acc_rate_SAGE, 6),
+                                                   'DropEdge': round(test_acc_rate_de, 6),
+                                                   'GRAND': round(test_acc_rate_GRAND, 6),
+                                                   'RGCN': round(float(test_acc_rate_RGCN), 6),
+                                                   'proGNN': round(float(test_acc_rate_proGNN), 6),
+                                                   'ours': round(test_acc_rate_ours, 6)}
+    val_acc_table.loc[val_acc_table.shape[0]] = {'round': round_num, 'GCN': round(best_val_rate_GCN, 6),
+                                                 'GAT': round(best_val_rate_GAT, 6),
+                                                 'SAGE': round(best_val_rate_SAGE, 6),
+                                                 'DropEdge': round(best_val_rate_de, 6),
+                                                 'GRAND': round(best_val_rate_GRAND, 6),
+                                                 'RGCN': 0, 'proGNN': 0,
+                                                 'ours': round(best_val_rate_ours, 6)}
+    train_loss_table.loc[train_loss_table.shape[0]] = {'round': round_num, 'GCN': round(train_loss_GCN, 6),
+                                                       'GAT': round(train_loss_GAT, 6),
+                                                       'SAGE': round(train_loss_SAGE, 6),
+                                                       'DropEdge': round(train_loss_de, 6),
+                                                       'GRAND': round(train_loss_GRAND, 6),
+                                                       'RGCN': 0, 'proGNN': 0,
+                                                       'ours': round(train_loss_ours, 6)}
+
+test_acc_mean = test_acc_table[['GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours']].mean()
+test_acc_mean['round'] = 'average'
+test_acc_table = test_acc_table.append(test_acc_mean, ignore_index=True)
+
+val_acc_mean = val_acc_table[['GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours']].mean()
+val_acc_mean['round'] = 'average'
+val_acc_table = val_acc_table.append(val_acc_mean, ignore_index=True)
+
+train_loss_mean = train_loss_table[['GCN', 'GAT', 'SAGE', 'DropEdge', 'GRAND', 'RGCN', 'proGNN', 'ours']].mean()
+train_loss_mean['round'] = 'average'
+train_loss_table = train_loss_table.append(train_loss_mean, ignore_index=True)
+
+test_acc_table.to_excel(
+    '/home/luckytiger/GNN/KDD_model/model_result/agg_result/full_data_agg/{}_test_acc_{}_{}_{}_{}.xlsx'.format(
+        timestamp,
+        args.dataset,
+        args.type,
+        args.rate,
+        args.feature_rate
+    ))
+
+val_acc_table.to_excel(
+    '/home/luckytiger/GNN/KDD_model/model_result/agg_result/full_data_agg/{}_val_acc_{}_{}_{}_{}.xlsx'.format(
+        timestamp,
+        args.dataset,
+        args.type,
+        args.rate,
+        args.feature_rate))
+
+train_loss_table.to_excel(
+    '/home/luckytiger/GNN/KDD_model/model_result/agg_result/full_data_agg/{}_train_loss_{}_{}_{}_{}.xlsx'.format(
+        timestamp,
+        args.dataset,
+        args.type,
+        args.rate,
+        args.feature_rate))
+
+print('mission complete!')
